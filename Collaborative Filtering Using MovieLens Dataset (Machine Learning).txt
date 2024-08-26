@@ -1,0 +1,92 @@
+import pandas as pd
+import tensorflow as tf
+import zipfile
+import os
+# URL of the dataset
+url = 'https://files.grouplens.org/datasets/movielens/ml-latest-small.zip'
+dataset = tf.keras.utils.get_file('ml-latest-small.zip', url, extract=False)
+# Extract the dataset
+zip_dir = os.path.splitext(dataset)[0]  # remove .zip extension
+with zipfile.ZipFile(dataset, 'r') as z:
+    z.extractall(zip_dir)
+
+# Path to the ratings.csv file
+ratings_file = os.path.join(zip_dir, 'ml-latest-small', 'ratings.csv')
+
+# Load the data into a DataFrame
+df = pd.read_csv(ratings_file)
+
+# Display the first few rows
+print(df.head())
+# Preprocess the data
+user_ids = df['userId'].unique().tolist()
+movie_ids = df['movieId'].unique().tolist()
+
+# Create a mapping from IDs to indices
+user_id_to_idx = {x: i for i, x in enumerate(user_ids)}
+movie_id_to_idx = {x: i for i, x in enumerate(movie_ids)}
+
+# Map the IDs to indices
+df['userId'] = df['userId'].map(user_id_to_idx)
+df['movieId'] = df['movieId'].map(movie_id_to_idx)
+
+# Prepare the data for the model
+X = df[['userId', 'movieId']]
+y = df['rating']
+
+# Split the data into training and testing sets
+from sklearn.model_selection import train_test_split
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+from tensorflow.keras.layers import Embedding, Flatten, Dot, Add, Input, Dense
+from tensorflow.keras.models import Model
+
+# Number of users and movies
+n_users = len(user_ids)
+n_movies = len(movie_ids)
+
+# Embedding dimension
+embedding_dim = 50
+
+# User embedding
+user_input = Input(shape=(1,), name='user_input')
+user_embedding = Embedding(input_dim=n_users, output_dim=embedding_dim, input_length=1, name='user_embedding')(user_input)
+user_vec = Flatten(name='user_flatten')(user_embedding)
+
+# Movie embedding
+movie_input = Input(shape=(1,), name='movie_input')
+movie_embedding = Embedding(input_dim=n_movies, output_dim=embedding_dim, input_length=1, name='movie_embedding')(movie_input)
+movie_vec = Flatten(name='movie_flatten')(movie_embedding)
+
+# Dot product of user and movie vectors
+dot_product = Dot(axes=1)([user_vec, movie_vec])
+
+# Add bias terms
+user_bias = Embedding(input_dim=n_users, output_dim=1, input_length=1, name='user_bias')(user_input)
+movie_bias = Embedding(input_dim=n_movies, output_dim=1, input_length=1, name='movie_bias')(movie_input)
+
+user_bias = Flatten(name='user_bias_flatten')(user_bias)
+movie_bias = Flatten(name='movie_bias_flatten')(movie_bias)
+
+# Combine all terms
+pred = Add()([dot_product, user_bias, movie_bias])
+
+# Build the model
+model = Model(inputs=[user_input, movie_input], outputs=pred)
+model.compile(optimizer='adam', loss='mean_squared_error')
+
+# Display the model architecture
+model.summary()
+# Train the model
+history = model.fit([X_train['userId'], X_train['movieId']], y_train,
+                    epochs=10,
+                    verbose=1,
+                    validation_data=([X_test['userId'], X_test['movieId']], y_test))
+# Evaluate the model
+test_loss = model.evaluate([X_test['userId'], X_test['movieId']], y_test)
+print(f'Test Loss: {test_loss:.4f}')
+# Predict the rating for a specific user and movie
+user_id = 1
+movie_id = 2
+
+predicted_rating = model.predict([pd.Series([user_id]), pd.Series([movie_id])])
+print(f"Predicted rating for user {user_id} and movie {movie_id}: {predicted_rating[0][0]:.4f}")
